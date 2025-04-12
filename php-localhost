@@ -2,7 +2,7 @@
 set -eEuo pipefail
 shopt -s extglob
 readonly -- PRG=$(basename -- "$(readlink -en -- "$0")")
-readonly -- BUILD=421
+readonly -- BUILD=422
 readonly -- VERSION=1.0."$BUILD"
 declare -i PORT=8000       # Default port to use for PHP server
 declare -- DIRECTORY=''    # Default directory to serve (will fallback to .)
