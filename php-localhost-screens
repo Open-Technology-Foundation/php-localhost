@@ -10,9 +10,10 @@ set -eEuo pipefail
 }
 
 while((1)); do
-  printf '%.0s-' {1..72}; echo
   PS3="Select PHP localhost ID: "
   readarray -t TT < <(ps -aeF |grep 'php .*localhost:[0-9]* ' |tr -s ' ' |cut -d' ' -f2,11- |sort -n)
+  ((${#TT[@]})) || { >&2 echo "$(basename "$0"): No PHP localhosts found"; exit 1; }
+  printf '%.0s-' {1..72}; echo
   select screen_id in quit "${TT[@]}"; do
     [[ $REPLY == 1 || $REPLY == q || $screen_id == quit ]] && break 2
     [[ -z $screen_id ]] && continue 2

@@ -4,15 +4,17 @@ shopt -s extglob
 readonly -- PRG0=$(readlink -en -- "$0")
 readonly -- PRGDIR=$(dirname -- "$PRG0")
 readonly -- PRG=$(basename -- "$PRG0")
-readonly -- BUILD=424
+readonly -- BUILD=425
 readonly -- VERSION=1.0."$BUILD"
-declare -i PORT=0          # Default port to use for PHP server
+declare -i PORT=0          # Default port to use for PHP server; PORT=0 means get random port (within range MINPORT-MAXPORT)
+declare -i MINPORT=8100 MAXPORT=8999 # Validation range of allowed ports (for randomised)
 declare -- DIRECTORY=''    # Default directory to serve (will fallback to .)
 declare -- MODE=fg         # Default mode: fg (foreground), bg (background), screen
 declare -i VERBOSE=1       # Verbose output by default
 declare -a SERVER_PIDS=()  # Array to track PHP server processes for cleanup
 declare -- WAIT=0.5
 declare -i EXECUTE=0
+
 
 # Utility functions
 text() { ((VERBOSE)) && echo "$PRG": "$*" || true; }  # Verbose echo (respects quiet mode)
@@ -157,21 +159,25 @@ usage() {
   cat <<EOT
 $PRG $VERSION - PHP development server launcher
 
-Usage: $PRG [-q|--quiet] [-v|--verbose] [-V|--version] [-h|--help] [-p|--port PORT] [-d|--directory DIR] [--fg|--bg|--screen] [port] [dir] [mode]
+Usage: $PRG [-q|--quiet] [-v|--verbose] [-V|--version] [-h|--help] 
+       [-p|--port PORT] [-d|--directory DIR] [-i|--minport MIN] [-a|--maxport MAX]
+       [--fg|--bg|--screen] [-x|--execute] [port] [dir] [mode]
 
 Arguments can be in any order.
 
 Parameters:
-    port    - Port number to use (default: auto-detect)
-    dir     - Directory to serve (auto-detects html/public folders)
+    port    - Port number to use (default: auto-assign from port range)
+    dir     - Directory to serve (auto-detects html/public/www/etc. folders)
     mode    - Server run mode (default: $MODE)
                 fg     - Run in foreground
                 bg     - Run in background
                 screen - Run in screen session
 
 Options:
-    -p, --port PORT       Specify port number (0 = auto-assign from $MINPORT-$MAXPORT)
+    -p, --port PORT       Specify port number (0 = auto-assign from port range)
     -d, --directory DIR   Specify directory to serve
+    -i, --minport MIN     Set minimum port range for auto-assignment
+    -a, --maxport MAX     Set maximum port range for auto-assignment
     --fg                  Run in foreground mode
     --bg                  Run in background mode
     --screen              Run in screen session
@@ -182,26 +188,19 @@ Options:
     -V, --version         Display version information
     -h, --help            Display this help message
 
+Management:
+    Use 'php-localhost-screens' to manage running PHP server instances
+
 Features:
-  - Auto-selects random available port if none specified
+  - Auto-selects random available port from range $MINPORT-$MAXPORT if none specified
   - Auto-detects common web directories (html, public, www, etc.)
-  - Automatically detects and offers to kill existing PHP servers on the same port
+  - Auto-detects and manages PHP servers on same port
   - Supports running in foreground, background, or screen session
-  - Automatically uses router.php if present in the served directory
-  - Validates port numbers and ensures they are valid
-  - Verifies directory existence and resolves to absolute path
-  - Checks for required dependencies (php, lsof, nc, screen)
-  - Provides clean shutdown via signal trapping
-
-Router Support:
-  If a file named 'router.php' exists in the served directory, it will be used
-  automatically to handle URL routing and custom request processing.
-
-  A router file allows you to:
-   - Handle URLs that don't match physical files
-   - Create custom API endpoints
-   - Define rewrite rules and redirects
-   - Implement custom 404 handlers
+  - Auto-uses router.php if present in the served directory
+  - Opens browser upon server start with -x flag
+  - Validates port numbers and checks for availability
+  - Validates dependencies (php, lsof, nc, screen)
+  - Provides clean shutdown with signal trapping
 
 Examples:
     # Auto-detect port and directory, run in foreground
@@ -210,20 +209,17 @@ Examples:
     # Run on port 8001 serving html/ in background
     $PRG 8001 html bg
 
+    # Set custom port range (1024-2048) and auto-select
+    $PRG -i 1024 -a 2048
+
     # Serve current directory on port 8086
     $PRG . 8086
 
     # Screen session on port 8087 serving public/
     $PRG screen 8087 public
 
-    # Serve html/ port 8000 in screen session
-    $PRG html screen 8000
-
     # Quiet mode, auto-kill existing servers on port 8080
     $PRG -q 8080 .
-
-    # Use named parameters
-    $PRG -p 8080 -d public
 
     # Run in background with auto-port and open browser
     $PRG --bg -x
@@ -238,20 +234,33 @@ validate_port() {
   # Check if port is a valid number
   [[ "$p" =~ ^[0-9]+$ ]] || die 22 "Invalid port number: $1 (must be a number)"
   # Check port range
-  if ((p < 1024 || p > 65535)); then
-    >&2 text "warning: Port $p is outside the recommended range (1024-65535)"
-    ((p < 1024)) && >&2 text "Ports below 1024 typically require root privileges"
+  if ((p < MINPORT || p > MAXPORT)); then
+    >&2 text "warning: Port $p is outside the recommended range ($MINPORT-$MAXPORT)"
+    ((p < 1024)) && >&2 text "warning: Ports below 1024 typically require root privileges"
   fi
   return 0
 }
 
-MINPORT=8100
-MAXPORT=8999
+port_range() {
+  if (($#)); then
+    local -i min=$1 max=$2
+    [[ "$min" =~ ^[0-9]+$ ]] || die 22 "Invalid port number: $min (must be a number)"
+    [[ "$max" =~ ^[0-9]+$ ]] || die 22 "Invalid port number: $max (must be a number)"
+    ((min > max)) && { min=$2; max=$1; }
+    ((max > 65535)) && max=65535
+    ((min < 1024)) && min=1024
+    MINPORT=$min
+    MAXPORT=$max
+  else
+    echo -n "$MINPORT-$MAXPORT"
+  fi
+}
+
 find_available_port() {
   local port
   while ((1)); do
     # Generate a random port within the specified range
-    port=$(shuf -i "$MINPORT-$MAXPORT" -n 1)
+    port=$(shuf -i "$(port_range)" -n 1)
     # Check if the port is available
     if ! ss -tuln | grep -q ":$port "; then
       echo "$port"
@@ -274,9 +283,10 @@ while (($#)); do case $1 in
   --bg|--fg|--screen)
                   MODE=${1:2} ;;
   -d|--directory) [[ -n $DIRECTORY ]] && die 1 "Directory '$DIRECTORY' was previously defined."
-                  shift
-                  DIRECTORY=${1:-}
-                  ;;
+                  shift; DIRECTORY=${1:-} ;;
+  -i|--minport)   shift; MINPORT=${1:- 1024} ;;
+  -a|--maxport)   shift; MAXPORT=${1:- 65535} ;;
+
   -x|--execute)   EXECUTE=1 ;;
   -v|--verbose)   VERBOSE=1 ;;
   -q|--quiet)     VERBOSE=0 ;; # Suppresses output and auto-kills existing servers
@@ -290,6 +300,9 @@ while (($#)); do case $1 in
                   DIRECTORY="${1:-}"
                   ;;
 esac; shift; done
+
+# set port ranges
+port_range "$MINPORT" "$MAXPORT"
 
 # PORT flag == 0 means get rando
 ((PORT)) || PORT=$(find_available_port)

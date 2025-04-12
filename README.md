@@ -1,16 +1,17 @@
 # PHP-Localhost
 
-A bash utility script that creates and manages PHP development servers with ease.
+A bash utility for creating and managing PHP development servers with ease.
 
 ## Features
 
 - Start a PHP development server with a single command
-- Auto-selects random available port if none specified
+- Auto-selects random available port from configurable range
 - Auto-detects common web directories (html, public, www, etc.)
 - Multiple running modes: foreground, background, or screen session
 - Automatic port collision detection and resolution
 - Router file support for custom URL handling
 - Open website in default browser with a single command
+- Interactive management of running servers via companion script
 - Comprehensive error handling and dependency checking
 - Clean shutdown via signal trapping
 - Named parameter support with intuitive options
@@ -18,7 +19,7 @@ A bash utility script that creates and manages PHP development servers with ease
 ## Installation
 
 1. Clone this repository
-2. Make the script executable: `chmod +x php-localhost`
+2. Make the scripts executable: `chmod +x php-localhost php-localhost-screens`
 3. Optionally, add to your PATH
 
 ## Dependencies
@@ -30,15 +31,15 @@ A bash utility script that creates and manages PHP development servers with ease
 
 ## Usage
 
-    php-localhost [-q] [-v] [-V] [-h] [-p PORT] [-d DIR] [-x] [--fg|--bg|--screen] [port] [dir] [mode]
+    php-localhost [-q] [-v] [-V] [-h] [-p PORT] [-d DIR] [-i MIN] [-a MAX] [-x] [--fg|--bg|--screen] [port] [dir] [mode]
 
 
 ### Parameters
 
 Arguments can be in any order.
 
-- `port` - Port number to use (default: auto-detect)
-- `dir` - Directory to serve (auto-detects html/public folders)
+- `port` - Port number to use (default: auto-assign from port range)
+- `dir` - Directory to serve (auto-detects html/public/www folders)
 - `mode` - Server run mode (default: fg)
   - `fg` - Run in foreground
   - `bg` - Run in background
@@ -46,8 +47,10 @@ Arguments can be in any order.
 
 ### Options
 
-- `-p, --port PORT` - Specify port number (0 = auto-assign from 8100-8999 range)
+- `-p, --port PORT` - Specify port number (0 = auto-assign from port range)
 - `-d, --directory DIR` - Specify directory to serve
+- `-i, --minport MIN` - Set minimum port range for auto-assignment (default: 8100)
+- `-a, --maxport MAX` - Set maximum port range for auto-assignment (default: 8999)
 - `--fg` - Run in foreground mode
 - `--bg` - Run in background mode
 - `--screen` - Run in screen session
@@ -56,6 +59,13 @@ Arguments can be in any order.
 - `-v, --verbose` - Show verbose output (default)
 - `-V, --version` - Display version information
 - `-h, --help` - Display the help message
+
+## Management
+
+Use the companion script `php-localhost-screens` to:
+- List all running PHP server instances
+- Interactively manage (view/kill) running servers
+- Manage screen sessions for PHP servers
 
 ## Router Support
 
@@ -70,14 +80,29 @@ A router file allows you to:
 ## Examples
 
 ```bash
-php-localhost                     # Auto-detect port and directory, run in foreground
-php-localhost 8001 html bg        # Run on port 8001 serving html/ in background
-php-localhost . 8086              # Serve current directory on port 8086
-php-localhost screen 8087 public  # Screen session on port 8087 serving public/
-php-localhost html screen 8000    # Serve html/ port 8000 in screen session
-php-localhost -q 8080 .           # Quiet mode, auto-kill existing servers on port 8080
-php-localhost -p 8080 -d public   # Use named parameters
-php-localhost --bg -x             # Run in background with auto-port and open browser
+# Auto-detect port and directory, run in foreground
+php-localhost
+
+# Run on port 8001 serving html/ in background
+php-localhost 8001 html bg
+
+# Set custom port range (1024-2048) and auto-select
+php-localhost -i 1024 -a 2048
+
+# Serve current directory on port 8086
+php-localhost . 8086
+
+# Screen session on port 8087 serving public/
+php-localhost screen 8087 public
+
+# Quiet mode, auto-kill existing servers on port 8080
+php-localhost -q 8080 .
+
+# Run in background with auto-port and open browser
+php-localhost --bg -x
+
+# List and manage running PHP servers
+php-localhost-screens
 ```
 
 ## Contributing
