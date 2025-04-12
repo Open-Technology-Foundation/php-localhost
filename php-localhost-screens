@@ -1,0 +1,46 @@
+#!/bin/bash
+set -eEuo pipefail
+
+(($#)) && {
+  [[ "$*" == *"-h"* || "$*" == *"--help"* ]] && {
+    echo "usage: $(basename "$0")"
+    echo "Displays all current php localhosts"
+    exit 0
+  }
+}
+
+while((1)); do
+  printf '%.0s-' {1..72}; echo
+  PS3="Select PHP localhost ID: "
+  readarray -t TT < <(ps -aeF |grep 'php .*localhost:[0-9]* ' |tr -s ' ' |cut -d' ' -f2,11- |sort -n)
+  select screen_id in quit "${TT[@]}"; do
+    [[ $REPLY == 1 || $REPLY == q || $screen_id == quit ]] && break 2
+    [[ -z $screen_id ]] && continue 2
+    while ((1)); do
+      PS3="Operation: "
+      printf '%.0s-' {1..72}; echo
+      echo "Target: $screen_id"
+      pid=${screen_id%% *}
+      OPS=(quit remove)
+      [[ $screen_id == *"SCREEN"* ]] && OPS+=(open)
+      select op in "${OPS[@]}"; do
+        [[ $REPLY == 1 || $REPLY == q || $op == quit ]] && break 3
+        [[ -z $op ]] && continue 2
+        case "$op" in
+          remove)   if [[ $screen_id == *"SCREEN"* ]]; then
+                      screen -X -S "$pid" quit
+                    else
+                      kill -9 "$pid"
+                    fi
+                    break 3 ;;
+          open)     screen -r "$pid"
+                    continue 2 ;;
+          *)        continue 2;;
+        esac
+      done
+    done
+    PS3="Select screen ID: "
+  done
+done
+
+#fin

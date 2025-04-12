@@ -1,18 +1,22 @@
 #!/bin/bash
 set -eEuo pipefail
 shopt -s extglob
-readonly -- PRG=$(basename -- "$(readlink -en -- "$0")")
-readonly -- BUILD=423
+readonly -- PRG0=$(readlink -en -- "$0")
+readonly -- PRGDIR=$(dirname -- "$PRG0")
+readonly -- PRG=$(basename -- "$PRG0")
+readonly -- BUILD=424
 readonly -- VERSION=1.0."$BUILD"
-declare -i PORT=8000       # Default port to use for PHP server
+declare -i PORT=0          # Default port to use for PHP server
 declare -- DIRECTORY=''    # Default directory to serve (will fallback to .)
 declare -- MODE=fg         # Default mode: fg (foreground), bg (background), screen
 declare -i VERBOSE=1       # Verbose output by default
 declare -a SERVER_PIDS=()  # Array to track PHP server processes for cleanup
+declare -- WAIT=0.5
+declare -i EXECUTE=0
 
 # Utility functions
 text() { ((VERBOSE)) && echo "$PRG": "$*" || true; }  # Verbose echo (respects quiet mode)
-error() { >&2        echo "$PRG": error: "$*"; }  # Error message to stderr
+error() { >&2 echo "$PRG": error: "$*"; }  # Error message to stderr
 die() { error "${2:-}"; exit "${1:-1}"; }  # Print error and exit with code
 
 # Error trap and cleanup function
@@ -20,13 +24,16 @@ cleanup() {
   local -i exit_code=$?
   local -- pid
   # Only clean up if we're in foreground mode or trap was triggered due to error
-  if [[ "$MODE" == "fg" || $exit_code -ne 0 ]]; then
+  if [[ $MODE == fg ]] || ((exit_code)); then
     for pid in "${SERVER_PIDS[@]}"; do
       if kill -0 "$pid" 2>/dev/null; then
         text "Stopping PHP server (PID: $pid)"
         kill "$pid" 2>/dev/null || true
       fi
     done
+  elif ((EXECUTE)); then
+    execstr=$(get_browser) || die 1 "No Browser found"
+    exec "$execstr" http://localhost:"$PORT"/
   fi
   exit $exit_code
 }
@@ -53,70 +60,174 @@ check_dependencies() {
   # Validate PHP version
   local php_version
   php_version=$(php -r 'echo PHP_VERSION;')
-  if [[ -z "$php_version" ]]; then
-    error "Could not determine PHP version"
-    exit 1
-  fi
+  [[ -z "$php_version" ]] && die 1 "Could not determine PHP version"
   text "Using PHP version $php_version"
   return 0
 }
 
+get_browser() {
+  local browser=""
+  # Check if we're in a GUI environment
+  if [[ -n "$DISPLAY" ]] || [[ -n "$WAYLAND_DISPLAY" ]]; then
+    while ((1)); do
+      # Try xdg-settings first (most reliable in modern systems)
+      if command -v xdg-settings &>/dev/null; then
+        browser_desktop=$(xdg-settings get default-web-browser 2>/dev/null)
+        if [[ -n "$browser_desktop" ]]; then
+          # Extract the actual browser command from the .desktop file
+          desktop_file=$(find /usr/share/applications /usr/local/share/applications ~/.local/share/applications -name "$browser_desktop" 2>/dev/null | head -1)
+          if [[ -n "$desktop_file" ]]; then
+            browser=$(grep "^Exec=" "$desktop_file" | sed 's/^Exec=//' | sed 's/%[uUfF]//' | awk '{print $1}' |head -n1)
+            [[ -n $browser ]] && break
+          fi
+        fi
+      fi
+
+      # If xdg-settings failed, try xdg-mime
+      if [[ -z "$browser" ]] && command -v xdg-mime &>/dev/null; then
+        browser_desktop=$(xdg-mime query default x-scheme-handler/http 2>/dev/null)
+        if [[ -n "$browser_desktop" ]]; then
+          desktop_file=$(find /usr/share/applications /usr/local/share/applications ~/.local/share/applications -name "$browser_desktop" 2>/dev/null | head -1)
+          if [[ -n "$desktop_file" ]]; then
+            browser=$(grep "^Exec=" "$desktop_file" | sed 's/^Exec=//' | sed 's/%[uUfF]//' | awk '{print $1}' |head -n1)
+            [[ -n $browser ]] && break
+         fi
+        fi
+      fi
+
+      # If still no browser, check alternatives system
+      if [[ -z "$browser" ]] && command -v update-alternatives &>/dev/null; then
+        browser=$(update-alternatives --query x-www-browser 2>/dev/null | grep "Value:" | awk '{print $2}' |head -n1)
+        [[ -n $browser ]] && break
+      fi
+
+      # Check environment variable as last resort for GUI
+      if [[ -z "$browser" ]] && [[ -n "$BROWSER" ]]; then
+        browser="$BROWSER"
+        [[ -n $browser ]] && break
+      fi
+
+      # Common GUI browsers to try if all else fails
+      if [[ -z "$browser" ]]; then
+        for b in firefox chromium-browser google-chrome brave-browser opera epiphany-browser konqueror; do
+          if command -v "$b" &>/dev/null; then
+            browser="$b"
+            break 2
+          fi
+        done
+      fi
+
+      break
+    done
+  else
+    # We're in a terminal environment
+    # Check if BROWSER env var points to a terminal browser
+    if [[ -n "$BROWSER" ]]; then
+      for term_browser in w3m lynx elinks links; do
+        if [[ "$BROWSER" == *"$term_browser"* ]] && command -v "$term_browser" &>/dev/null; then
+          browser="$term_browser"
+          break
+        fi
+      done
+    fi
+    # If BROWSER didn't work, try common terminal browsers
+    if [[ -z "$browser" ]]; then
+      for b in w3m lynx elinks links; do
+        if command -v "$b" &>/dev/null; then
+          browser="$b"
+          break
+        fi
+      done
+    fi
+  fi
+
+  # If we still don't have a browser, report error
+  if [[ -z "$browser" ]]; then
+     >&2 echo "${FUNCNAME:-}: Error: No web browser found on this system."
+    echo ''
+    return 1
+  fi
+
+  echo "$browser"
+  return 0
+}
+
+
 usage() {
   cat <<EOT
-$PRG $VERSION - Create a webdev php localhost
+$PRG $VERSION - PHP development server launcher
 
 Usage: $PRG [-q|--quiet] [-v|--verbose] [-V|--version] [-h|--help] [-p|--port PORT] [-d|--directory DIR] [--fg|--bg|--screen] [port] [dir] [mode]
 
 Arguments can be in any order.
 
 Parameters:
-  port    - Port number to use (default: $PORT)
-  dir     - Directory to serve (default: ${DIRECTORY:-.})
-  mode    - Server run mode (default: $MODE)
-              fg     - Run in foreground
-              bg     - Run in background
-              screen - Run in screen session
+    port    - Port number to use (default: auto-detect)
+    dir     - Directory to serve (auto-detects html/public folders)
+    mode    - Server run mode (default: $MODE)
+                fg     - Run in foreground
+                bg     - Run in background
+                screen - Run in screen session
 
 Options:
-  -p, --port PORT       Specify port number
-  -d, --directory DIR   Specify directory to serve
-  --fg                  Run in foreground mode
-  --bg                  Run in background mode
-  --screen              Run in screen session
-  -q, --quiet           Suppress output and auto-kill existing servers on the same port
-  -v, --verbose         Show verbose output (default)
-  -V, --version         Display version information
-  -h, --help            Display this help message
+    -p, --port PORT       Specify port number (0 = auto-assign from $MINPORT-$MAXPORT)
+    -d, --directory DIR   Specify directory to serve
+    --fg                  Run in foreground mode
+    --bg                  Run in background mode
+    --screen              Run in screen session
+    -x, --execute         Open URL in browser when server starts
+    -q, --quiet           Suppress output and auto-kill
+                          existing servers on the same port
+    -v, --verbose         Show verbose output (default)
+    -V, --version         Display version information
+    -h, --help            Display this help message
 
 Features:
+  - Auto-selects random available port if none specified
+  - Auto-detects common web directories (html, public, www, etc.)
   - Automatically detects and offers to kill existing PHP servers on the same port
   - Supports running in foreground, background, or screen session
   - Automatically uses router.php if present in the served directory
-  - Validates port numbers and ensures they are integers
+  - Validates port numbers and ensures they are valid
   - Verifies directory existence and resolves to absolute path
   - Checks for required dependencies (php, lsof, nc, screen)
   - Provides clean shutdown via signal trapping
-  - Smart directory detection (uses 'html' directory if available, otherwise uses current directory)
 
 Router Support:
   If a file named 'router.php' exists in the served directory, it will be used
   automatically to handle URL routing and custom request processing.
-  
+
   A router file allows you to:
-  - Handle URLs that don't match physical files
-  - Create custom API endpoints
-  - Define rewrite rules and redirects
-  - Implement custom 404 handlers
+   - Handle URLs that don't match physical files
+   - Create custom API endpoints
+   - Define rewrite rules and redirects
+   - Implement custom 404 handlers
 
 Examples:
-  $PRG                     # Default: port=$PORT, dir=${DIRECTORY:-.}, mode=$MODE
-  $PRG 8001 html bg        # Run on port 8001 serving html in background
-  $PRG . 8080              # Serve current directory on port 8080
-  $PRG screen 8087 public  # Run in screen session on port 8087 serving public
-  $PRG html screen 8000    # Serve html on port 8000 in screen session
-  $PRG -q 8080 .           # Quiet mode, auto-kill existing servers on port 8080
-  $PRG -p 8080 -d public   # Use named parameters
-  $PRG --port 8080 --bg    # Run in background on port 8080 using current directory
+    # Auto-detect port and directory, run in foreground
+    $PRG
+
+    # Run on port 8001 serving html/ in background
+    $PRG 8001 html bg
+
+    # Serve current directory on port 8086
+    $PRG . 8086
+
+    # Screen session on port 8087 serving public/
+    $PRG screen 8087 public
+
+    # Serve html/ port 8000 in screen session
+    $PRG html screen 8000
+
+    # Quiet mode, auto-kill existing servers on port 8080
+    $PRG -q 8080 .
+
+    # Use named parameters
+    $PRG -p 8080 -d public
+
+    # Run in background with auto-port and open browser
+    $PRG --bg -x
+
 EOT
   exit "${1:-1}"
 }
@@ -134,7 +245,25 @@ validate_port() {
   return 0
 }
 
-# Process command line arguments
+MINPORT=8100
+MAXPORT=8999
+find_available_port() {
+  local port
+  while ((1)); do
+    # Generate a random port within the specified range
+    port=$(shuf -i "$MINPORT-$MAXPORT" -n 1)
+    # Check if the port is available
+    if ! ss -tuln | grep -q ":$port "; then
+      echo "$port"
+      return 0
+    else
+      >&2 echo "$FUNCNAME: Port $port is in use, trying another..."
+    fi
+  done
+}
+
+
+# Process command line arguments ---------------------------------
 # shellcheck disable=SC2206
 while (($#)); do case $1 in
   -p|--port)      shift
@@ -146,8 +275,9 @@ while (($#)); do case $1 in
                   MODE=${1:2} ;;
   -d|--directory) [[ -n $DIRECTORY ]] && die 1 "Directory '$DIRECTORY' was previously defined."
                   shift
-                  DIRECTORY=${1:-"$DIRECTORY"}
+                  DIRECTORY=${1:-}
                   ;;
+  -x|--execute)   EXECUTE=1 ;;
   -v|--verbose)   VERBOSE=1 ;;
   -q|--quiet)     VERBOSE=0 ;; # Suppresses output and auto-kills existing servers
   -V|--version)   echo "$PRG $VERSION"; exit 0 ;;
@@ -157,13 +287,19 @@ while (($#)); do case $1 in
   -*)             die 22 "Bad argument '$1'" ;;
   bg|fg|screen)   MODE=$1 ;;
   *)              [[ -n $DIRECTORY ]] && die 1 "Directory '$DIRECTORY' was previously defined."
-                  DIRECTORY="$1"
+                  DIRECTORY="${1:-}"
                   ;;
 esac; shift; done
 
-[[ -z $DIRECTORY ]] && {
-  [[ -d html ]] && DIRECTORY=html || DIRECTORY='.'
-}
+# PORT flag == 0 means get rando
+((PORT)) || PORT=$(find_available_port)
+
+if [[ -z $DIRECTORY ]]; then
+  for htmldir in public_html html www httpdocs htdocs webroot public web wwwroot; do
+    [[ -d "$htmldir" ]] && { DIRECTORY="$htmldir"; break; }
+  done
+  [[ -z $DIRECTORY ]] && DIRECTORY='.'
+fi
 
 # Verify directory exists
 [[ -d "$DIRECTORY" ]] || die 2 "Directory '$DIRECTORY' does not exist"
@@ -184,12 +320,12 @@ if nc -z localhost "$PORT" 2>/dev/null; then
       text "  PID $pid: $(ps -p "$pid" -o cmd= 2>/dev/null || text 'Unknown process')"
     done
     ((VERBOSE)) && read -r -p "$PRG: Do you want to kill these processes? y/n " yn || yn=y
-    [[ $yn == y ]] || exit 1
+    [[ $yn == y ]] || die 1 'Aborted'
     for pid in "${pids[@]}"; do
       kill "$pid" 2>/dev/null && text "Killed process $pid" || text "Failed to kill process $pid"
     done
     # Wait a moment for processes to terminate
-    sleep 1.5
+    sleep "$WAIT"
     # Check if port is still in use
     nc -z localhost "$PORT" 2>/dev/null \
         && die 1 "Port $PORT is still in use. Please try a different port."
@@ -199,10 +335,10 @@ if nc -z localhost "$PORT" 2>/dev/null; then
   fi
 fi
 
-text "localhost:$PORT for $DIRECTORY"
-
 # Function to start PHP server
 start_php_server() {
+  text "localhost:$PORT for $DIRECTORY"
+
   # Create router file if it doesn't exist
   local router_file="${DIRECTORY}/router.php"
   [[ -f "$router_file" ]] || text "No router file found. Using default PHP server routing."
@@ -221,11 +357,12 @@ start_php_server() {
       local server_pid=$!
       SERVER_PIDS+=("$server_pid")
       # Verify server started correctly
-      sleep 1
+      sleep "$WAIT"
       kill -0 "$server_pid" 2>/dev/null || die 1 "PHP server failed to start. Check for errors."
       text "Server started with PID $server_pid"
       text "To stop it, run: kill $server_pid"
       text "$PRG will now exit, but the PHP server will continue running in the background."
+      text http://localhost:"$PORT"/
       exit 0
       ;;
     screen)
@@ -234,17 +371,19 @@ start_php_server() {
       text "Use 'screen -r localhost-$PORT' to reattach to the server"
       text "Use Ctrl+A followed by D to detach from screen"
       # Create screen session
-      screen -dmS "localhost-$PORT" "${php_cmd[@]}"
+      screen -dmS localhost-"$PORT" "${php_cmd[@]}"
       # Verify screen session exists
-      sleep 1
-      screen -list | grep -q "localhost-$PORT" || die 1 "Failed to create screen session. Check for errors."
+      sleep "$WAIT"
+      screen -list | grep -q localhost-"$PORT" || die 1 "Failed to create screen session. Check for errors."
       text "$PRG will now exit, but the PHP server will continue running in screen."
+      text http://localhost:"$PORT"/
       exit 0
       ;;
     *)
+      EXECUTE=0 # not valid in this mode
       # Default: run in foreground (script will not exit until server is stopped)
       text "Starting PHP server in foreground. Press Ctrl+C to stop."
-      text "Server URL: http://localhost:$PORT/"
+      text http://localhost:"$PORT"/
       # Execute PHP server in foreground
       "${php_cmd[@]}"
       ;;
