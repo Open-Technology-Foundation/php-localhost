@@ -27,10 +27,12 @@ A bash utility script that creates and manages PHP development servers with ease
 ## Usage
 
 ```bash
-php-localhost [-q|--quiet] [-v|--verbose] [-V|--version] [-h|--help] [port] [dir] [mode]
+php-localhost [-q|-v] [-V] [-h] [port] [dir] [mode]
 ```
 
 ### Parameters
+
+Can be specified in any order.
 
 - `port` - Port number to use (default: 8000)
 - `dir` - Directory to serve (default: html)
