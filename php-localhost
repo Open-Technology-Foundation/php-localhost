@@ -2,7 +2,7 @@
 set -eEuo pipefail
 shopt -s extglob
 readonly -- PRG=$(basename -- "$(readlink -en -- "$0")")
-readonly -- BUILD=422
+readonly -- BUILD=423
 readonly -- VERSION=1.0."$BUILD"
 declare -i PORT=8000       # Default port to use for PHP server
 declare -- DIRECTORY=''    # Default directory to serve (will fallback to .)
@@ -11,7 +11,7 @@ declare -i VERBOSE=1       # Verbose output by default
 declare -a SERVER_PIDS=()  # Array to track PHP server processes for cleanup
 
 # Utility functions
-vecho() { ((VERBOSE)) && echo "$PRG": "$*" || true; }  # Verbose echo (respects quiet mode)
+text() { ((VERBOSE)) && echo "$PRG": "$*" || true; }  # Verbose echo (respects quiet mode)
 error() { >&2        echo "$PRG": error: "$*"; }  # Error message to stderr
 die() { error "${2:-}"; exit "${1:-1}"; }  # Print error and exit with code
 
@@ -23,7 +23,7 @@ cleanup() {
   if [[ "$MODE" == "fg" || $exit_code -ne 0 ]]; then
     for pid in "${SERVER_PIDS[@]}"; do
       if kill -0 "$pid" 2>/dev/null; then
-        vecho "Stopping PHP server (PID: $pid)"
+        text "Stopping PHP server (PID: $pid)"
         kill "$pid" 2>/dev/null || true
       fi
     done
@@ -57,7 +57,7 @@ check_dependencies() {
     error "Could not determine PHP version"
     exit 1
   fi
-  vecho "Using PHP version $php_version"
+  text "Using PHP version $php_version"
   return 0
 }
 
@@ -65,7 +65,7 @@ usage() {
   cat <<EOT
 $PRG $VERSION - Create a webdev php localhost
 
-Usage: $PRG [-q|--quiet] [-v|--verbose] [-V|--version] [-h|--help] [port] [dir] [mode]
+Usage: $PRG [-q|--quiet] [-v|--verbose] [-V|--version] [-h|--help] [-p|--port PORT] [-d|--directory DIR] [--fg|--bg|--screen] [port] [dir] [mode]
 
 Arguments can be in any order.
 
@@ -78,10 +78,15 @@ Parameters:
               screen - Run in screen session
 
 Options:
-  -q, --quiet   Suppress output and auto-kill existing servers on the same port
-  -v, --verbose Show verbose output (default)
-  -V, --version Display version information
-  -h, --help    Display this help message
+  -p, --port PORT       Specify port number
+  -d, --directory DIR   Specify directory to serve
+  --fg                  Run in foreground mode
+  --bg                  Run in background mode
+  --screen              Run in screen session
+  -q, --quiet           Suppress output and auto-kill existing servers on the same port
+  -v, --verbose         Show verbose output (default)
+  -V, --version         Display version information
+  -h, --help            Display this help message
 
 Features:
   - Automatically detects and offers to kill existing PHP servers on the same port
@@ -91,6 +96,7 @@ Features:
   - Verifies directory existence and resolves to absolute path
   - Checks for required dependencies (php, lsof, nc, screen)
   - Provides clean shutdown via signal trapping
+  - Smart directory detection (uses 'html' directory if available, otherwise uses current directory)
 
 Router Support:
   If a file named 'router.php' exists in the served directory, it will be used
@@ -109,6 +115,8 @@ Examples:
   $PRG screen 8087 public  # Run in screen session on port 8087 serving public
   $PRG html screen 8000    # Serve html on port 8000 in screen session
   $PRG -q 8080 .           # Quiet mode, auto-kill existing servers on port 8080
+  $PRG -p 8080 -d public   # Use named parameters
+  $PRG --port 8080 --bg    # Run in background on port 8080 using current directory
 EOT
   exit "${1:-1}"
 }
@@ -120,8 +128,8 @@ validate_port() {
   [[ "$p" =~ ^[0-9]+$ ]] || die 22 "Invalid port number: $1 (must be a number)"
   # Check port range
   if ((p < 1024 || p > 65535)); then
-    vecho "warning: Port $p is outside the recommended range (1024-65535)"
-    ((p < 1024)) && vecho "Ports below 1024 typically require root privileges"
+    >&2 text "warning: Port $p is outside the recommended range (1024-65535)"
+    ((p < 1024)) && >&2 text "Ports below 1024 typically require root privileges"
   fi
   return 0
 }
@@ -130,7 +138,9 @@ validate_port() {
 # shellcheck disable=SC2206
 while (($#)); do case $1 in
   -p|--port)      shift
-                  validate_port "${1:-"$PORT"}"; PORT=${1:-"$PORT"} ;;
+                  validate_port "${1:-"$PORT"}"
+                  PORT=${1:-"$PORT"}
+                  ;;
   +([0-9]))       validate_port "$1"; PORT=$1 ;;
   --bg|--fg|--screen)
                   MODE=${1:2} ;;
@@ -151,7 +161,9 @@ while (($#)); do case $1 in
                   ;;
 esac; shift; done
 
-[[ -z $DIRECTORY ]] && DIRECTORY='.'
+[[ -z $DIRECTORY ]] && {
+  [[ -d html ]] && DIRECTORY=html || DIRECTORY='.'
+}
 
 # Verify directory exists
 [[ -d "$DIRECTORY" ]] || die 2 "Directory '$DIRECTORY' does not exist"
@@ -162,38 +174,38 @@ check_dependencies
 
 # Check if PORT is already in use
 if nc -z localhost "$PORT" 2>/dev/null; then
-  vecho "Port $PORT is already in use"
+  text "Port $PORT is already in use"
   # Find PHP processes using this port
   declare -a pids=()
   mapfile -t pids < <(lsof -i :"$PORT" -t 2>/dev/null | xargs -r ps -o pid= -o cmd= -p | grep "php -S localhost:$PORT" | awk '{print $1}')
   if [[ ${#pids[@]} -gt 0 ]]; then
-    vecho "Found PHP server processes using port $PORT:"
+    text "Found PHP server processes using port $PORT:"
     for pid in "${pids[@]}"; do
-      vecho "  PID $pid: $(ps -p "$pid" -o cmd= 2>/dev/null || vecho 'Unknown process')"
+      text "  PID $pid: $(ps -p "$pid" -o cmd= 2>/dev/null || text 'Unknown process')"
     done
     ((VERBOSE)) && read -r -p "$PRG: Do you want to kill these processes? y/n " yn || yn=y
     [[ $yn == y ]] || exit 1
     for pid in "${pids[@]}"; do
-      kill "$pid" 2>/dev/null && vecho "Killed process $pid" || vecho "Failed to kill process $pid"
+      kill "$pid" 2>/dev/null && text "Killed process $pid" || text "Failed to kill process $pid"
     done
     # Wait a moment for processes to terminate
     sleep 1.5
     # Check if port is still in use
     nc -z localhost "$PORT" 2>/dev/null \
         && die 1 "Port $PORT is still in use. Please try a different port."
-    vecho "Port $PORT is now available"
+    text "Port $PORT is now available"
   else
     exit 1
   fi
 fi
 
-vecho "localhost:$PORT for $DIRECTORY"
+text "localhost:$PORT for $DIRECTORY"
 
 # Function to start PHP server
 start_php_server() {
   # Create router file if it doesn't exist
   local router_file="${DIRECTORY}/router.php"
-  [[ -f "$router_file" ]] || vecho "No router file found. Using default PHP server routing."
+  [[ -f "$router_file" ]] || text "No router file found. Using default PHP server routing."
   
   # Command to run
   local php_cmd=("php" "-S" "localhost:${PORT}" "-t" "${DIRECTORY}/")
@@ -204,35 +216,35 @@ start_php_server() {
   case "$MODE" in
     bg)
       # Run in background
-      vecho "Starting PHP server in background"
+      text "Starting PHP server in background"
       "${php_cmd[@]}" > /dev/null 2>&1 &
       local server_pid=$!
       SERVER_PIDS+=("$server_pid")
       # Verify server started correctly
       sleep 1
       kill -0 "$server_pid" 2>/dev/null || die 1 "PHP server failed to start. Check for errors."
-      vecho "Server started with PID $server_pid"
-      vecho "To stop it, run: kill $server_pid"
-      vecho "$PRG will now exit, but the PHP server will continue running in the background."
+      text "Server started with PID $server_pid"
+      text "To stop it, run: kill $server_pid"
+      text "$PRG will now exit, but the PHP server will continue running in the background."
       exit 0
       ;;
     screen)
       # Create a detached screen session
-      vecho "Starting PHP server in screen session named 'localhost-$PORT'"
-      vecho "Use 'screen -r localhost-$PORT' to reattach to the server"
-      vecho "Use Ctrl+A followed by D to detach from screen"
+      text "Starting PHP server in screen session named 'localhost-$PORT'"
+      text "Use 'screen -r localhost-$PORT' to reattach to the server"
+      text "Use Ctrl+A followed by D to detach from screen"
       # Create screen session
       screen -dmS "localhost-$PORT" "${php_cmd[@]}"
       # Verify screen session exists
       sleep 1
       screen -list | grep -q "localhost-$PORT" || die 1 "Failed to create screen session. Check for errors."
-      vecho "$PRG will now exit, but the PHP server will continue running in screen."
+      text "$PRG will now exit, but the PHP server will continue running in screen."
       exit 0
       ;;
     *)
       # Default: run in foreground (script will not exit until server is stopped)
-      vecho "Starting PHP server in foreground. Press Ctrl+C to stop."
-      vecho "Server URL: http://localhost:$PORT/"
+      text "Starting PHP server in foreground. Press Ctrl+C to stop."
+      text "Server URL: http://localhost:$PORT/"
       # Execute PHP server in foreground
       "${php_cmd[@]}"
       ;;
