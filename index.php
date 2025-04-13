@@ -1,1 +1,1 @@
-fileman/index.php
+fileman/fileman.php
