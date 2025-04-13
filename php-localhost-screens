@@ -1,5 +1,11 @@
 #!/bin/bash
-set -eEuo pipefail
+set -eEuo pipefail +o histexpand
+shopt -s extglob globstar checkwinsize #-u dotglob nullglob
+declare -- COLUMNS
+COLUMNS=$(tput cols)
+
+#echo -n ' ' # update COLUMNS
+#echo $COLUMNS
 
 (($#)) && {
   [[ "$*" == *"-h"* || "$*" == *"--help"* ]] && {
@@ -9,23 +15,29 @@ set -eEuo pipefail
   }
 }
 
+printline() { eval printf '%.0s-' {1..${COLUMNS:-64}}; echo; }
+
+echo "Active PHP Localhosts"
 while((1)); do
-  PS3="Select PHP localhost ID: "
   readarray -t TT < <(ps -aeF |grep 'php .*localhost:[0-9]* ' |tr -s ' ' |cut -d' ' -f2,11- |sort -n)
   ((${#TT[@]})) || { >&2 echo "$(basename "$0"): No PHP localhosts found"; exit 1; }
-  printf '%.0s-' {1..72}; echo
-  select screen_id in quit "${TT[@]}"; do
-    [[ $REPLY == 1 || $REPLY == q || $screen_id == quit ]] && break 2
+  PS3=$'\n''Select PHP localhost PID: '
+  printline
+  echo '0) quit'
+  select screen_id in "${TT[@]}"; do
+    [[ 0q == *"${REPLY:0:1}"* || $screen_id == quit ]] && break 2
     [[ -z $screen_id ]] && continue 2
+
     while ((1)); do
-      PS3="Operation: "
-      printf '%.0s-' {1..72}; echo
-      echo "Target: $screen_id"
+      printline
+      echo -e "Target: $screen_id\n"
       pid=${screen_id%% *}
-      OPS=(quit remove)
+      OPS=(remove)
       [[ $screen_id == *"SCREEN"* ]] && OPS+=(open)
+      PS3=$'\n''Operation: '
+      echo '0) back'
       select op in "${OPS[@]}"; do
-        [[ $REPLY == 1 || $REPLY == q || $op == quit ]] && break 3
+        [[ 0qb == *"${REPLY:0:1}"* || $op == back ]] && break 3
         [[ -z $op ]] && continue 2
         case "$op" in
           remove)   if [[ $screen_id == *"SCREEN"* ]]; then
