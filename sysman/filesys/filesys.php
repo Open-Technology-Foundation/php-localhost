@@ -124,21 +124,119 @@ $current_dir = isset($_GET['dir']) ? $_GET['dir'] : '';
 // Sanitize the current_dir input to prevent directory traversal
 $current_dir = str_replace(['../', '..\\', './', '.\\'], '', $current_dir);
 
-// Convert to absolute path for security checks
-$target_dir = $current_dir ? realpath($home_dir . '/' . $current_dir) : $home_dir;
+// CRITICAL: The main issue with symlink navigation is that realpath() resolves symlinks to their targets
+// which breaks relative path navigation. Let's completely rewrite this section.
 
-// Security check - make sure we're still within the home directory
-if (!$target_dir || strpos($target_dir, $home_dir) !== 0 || !is_dir($target_dir) || !is_readable($target_dir)) {
-  $target_dir = $home_dir;
-  $current_dir = '';
+// First check if the path exists physically as provided (without resolving symlinks)
+$physical_path = $home_dir;
+if ($current_dir) {
+  $physical_path = $home_dir . '/' . $current_dir;
 }
 
-// Get the relative path for display
-if ($target_dir == $home_dir) {
-  $current_dir = '';
+// Start with the original paths for debugging
+$original_path = $physical_path;
+$is_symlink_path = false;
+
+// Log the path we're checking for debugging
+error_log("Checking path: " . $physical_path);
+
+// Special handling for symlink paths
+if (is_link($physical_path)) {
+  $is_symlink_path = true;
+  $symlink_target = readlink($physical_path);
+  error_log("Found symlink, target: " . $symlink_target);
+  
+  // If it's a relative symlink, we need to resolve it relative to its location
+  if ($symlink_target[0] !== '/') {
+    $symlink_dir = dirname($physical_path);
+    $symlink_target = $symlink_dir . '/' . $symlink_target;
+    error_log("Relative symlink, resolved to: " . $symlink_target);
+  }
+  
+  // Use the symlink target for further checks
+  $target_dir = $symlink_target;
+  
+  // Check if the target exists and is a directory
+  if (!file_exists($target_dir) || !is_dir($target_dir)) {
+    error_log("Symlink target doesn't exist or isn't a directory: " . $target_dir);
+    $target_dir = $home_dir;
+    $current_dir = '';
+  }
 } else {
-  $current_dir = substr($target_dir, strlen($home_dir) + 1);
+  // For regular directories, use the physical path
+  $target_dir = $physical_path;
+  
+  // Make sure it exists and is a directory
+  if (!file_exists($target_dir) || !is_dir($target_dir)) {
+    error_log("Path doesn't exist or isn't a directory: " . $target_dir);
+    $target_dir = $home_dir;
+    $current_dir = '';
+  }
 }
+
+// Security check - restrict access to paths outside home or system directories
+// We need to ensure both the symlink and its target are secure
+if (!$current_dir) {
+  // Home directory is always allowed
+  // No extra checks needed
+} else if (strpos($target_dir, $home_dir) !== 0) {
+  // For targets outside home, do advanced permission checks
+  $dir_stats = @stat($target_dir);
+  $access_allowed = false;
+  
+  if ($dir_stats && function_exists('posix_getgrgid') && function_exists('posix_getgroups')) {
+    // Get directory's group
+    $dir_group = $dir_stats['gid'];
+    
+    // Get current user's groups
+    $user_groups = posix_getgroups();
+    
+    // Check if user is in the directory's group and group has read permissions
+    $group_has_read = ($dir_stats['mode'] & 0040) > 0; // Check group read bit
+    $user_in_group = in_array($dir_group, $user_groups);
+    
+    if ($group_has_read && $user_in_group) {
+      // Allow access if user has group permissions
+      $access_allowed = true;
+      error_log("Access allowed to symlink target via group permissions");
+    }
+  }
+  
+  if (!$access_allowed) {
+    // Fallback to home directory for security
+    error_log("Access denied to path outside home: " . $target_dir);
+    $target_dir = $home_dir;
+    $current_dir = '';
+  }
+}
+
+// For symlinks, maintain the current_dir from the URL instead of recalculating
+// This is crucial for proper navigation within symlinked paths
+if (!$is_symlink_path) {
+  // Get the relative path for display (only for non-symlink paths)
+  if ($target_dir == $home_dir) {
+    $current_dir = '';
+  } else {
+    // Only update current_dir if it's not a symlink path
+    // We use the relative path from the home directory
+    if (strpos($target_dir, $home_dir) === 0) {
+      $current_dir = substr($target_dir, strlen($home_dir) + 1);
+    }
+    // For paths outside home (allowed via group permissions), keep current_dir as is
+  }
+}
+
+// Add to debug information
+$debug_info = [
+  'detected_home' => $home_dir,
+  'target_dir' => $target_dir,
+  'original_path' => $original_path,
+  'physical_path' => $physical_path,
+  'current_dir' => $current_dir,
+  'is_symlink_path' => $is_symlink_path ? 'Yes' : 'No',
+  'is_readable' => is_readable($target_dir) ? 'Yes' : 'No',
+  'is_dir' => is_dir($target_dir) ? 'Yes' : 'No'
+];
 
 // Function to format file size (bytes to readable format)
 function formatFileSize($bytes) {
@@ -155,8 +253,12 @@ function formatFileSize($bytes) {
 
 // Function to get emoji icon based on file/directory type
 function getIcon($path) {
-  if (is_dir($path)) {
+  if (is_link($path) && is_dir($path)) {
+    return '🔗📁';
+  } else if (is_dir($path)) {
     return '📁';
+  } else if (is_link($path)) {
+    return '🔗';
   } else {
     $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
     switch ($ext) {
@@ -611,13 +713,42 @@ if ($allow_listing && is_dir($target_dir) && is_readable($target_dir)) {
       if ($file != '.') { // Include .. for navigation but exclude .
         $full_path = $target_dir . '/' . $file;
 
-        // Skip if we can't read the file/directory
+        // Skip if we can't read the file/directory, but check deeper for symlinks with group permissions
         if (!is_readable($full_path)) {
-          continue;
+          // For symlinks, do a more thorough check of group permissions
+          if (is_link($full_path)) {
+            $path_stats = @stat($full_path);
+            
+            if ($path_stats && function_exists('posix_getgrgid') && function_exists('posix_getgroups')) {
+              // Get path's group
+              $path_group = $path_stats['gid'];
+              
+              // Get current user's groups
+              $user_groups = posix_getgroups();
+              
+              // Check if user is in the directory's group and group has read permissions
+              $group_has_read = ($path_stats['mode'] & 0040) > 0; // Check group read bit
+              $user_in_group = in_array($path_group, $user_groups);
+              
+              if (!($group_has_read && $user_in_group)) {
+                continue; // Skip if no group read access
+              }
+              // Otherwise proceed with including this item
+            } else {
+              continue; // Skip without posix functions
+            }
+          } else {
+            continue; // Skip non-symlinks that aren't readable
+          }
         }
 
         $is_dir = is_dir($full_path);
-        $size = $is_dir ? '' : (is_readable($full_path) ? @filesize($full_path) : 'N/A');
+        // If it's a symlink that passed our group permission check but still shows as not readable
+        $is_symlink_with_group_access = is_link($full_path) && !is_readable($full_path);
+        
+        // Handle size determination
+        $size = $is_dir ? '' : (is_readable($full_path) || $is_symlink_with_group_access ? 
+                               @filesize($full_path) : 'N/A');
         $size = $size === 'N/A' ? 'N/A' : ($size === '' ? '' : formatFileSize($size));
 
         $items[] = [
@@ -627,8 +758,10 @@ if ($allow_listing && is_dir($target_dir) && is_readable($target_dir)) {
           'size' => $size,
           'modified' => date('Y-m-d H:i:s', @filemtime($full_path)),
           'icon' => getIcon($full_path),
-          'is_readable' => is_readable($full_path),
-          'is_writable' => is_writable($full_path)
+          'is_readable' => is_readable($full_path) || $is_symlink_with_group_access,
+          'is_writable' => is_writable($full_path),
+          'is_symlink' => is_link($full_path),
+          'is_symlink_with_group_access' => $is_symlink_with_group_access
         ];
         
         $entry_count++;
@@ -753,13 +886,7 @@ function getPermissions($file) {
 }
 
 // Debug information
-$debug = [
-  'detected_home' => $home_dir,
-  'target_dir' => $target_dir,
-  'current_dir' => $current_dir,
-  'is_readable' => is_readable($target_dir) ? 'Yes' : 'No',
-  'is_dir' => is_dir($target_dir) ? 'Yes' : 'No'
-];
+$debug = $debug_info;
 
 // Alert messages for file operations
 $alert_message = '';
@@ -965,6 +1092,10 @@ else if (isset($_GET['error'])) {
     .dir-link {
       font-weight: bold;
     }
+    .symlink-dir {
+      font-style: italic;
+      text-decoration: underline dotted;
+    }
     .action-buttons {
       white-space: nowrap;
     }
@@ -1160,8 +1291,21 @@ else if (isset($_GET['error'])) {
                         <a href="?dir=<?=urlencode(dirname($current_dir));?>" class="file-link dir-link">..</a>
                       <?php endif; ?>
                     <?php else: ?>
-                      <a href="?dir=<?=urlencode($current_dir ? $current_dir . '/' . $item['name'] : $item['name']);?>" class="file-link dir-link">
-                        <?=htmlspecialchars($item['name']);?>
+                      <?php
+                        // Calculate the directory path for the URL 
+                        $dir_path = $current_dir ? $current_dir . '/' . $item['name'] : $item['name'];
+                        $full_path = $item['path'];
+                        
+                        // Special handling for directory symlinks
+                        if ($item['is_symlink'] && $item['is_dir']) {
+                          // Log that we're accessing a symlink for debugging
+                          error_log("Accessing symlink directory: " . $full_path);
+                          // For symlinks, we want to maintain the URL path structure rather than resolving
+                          // the real path, so we use the name directly from the item
+                        }
+                      ?>
+                      <a href="?dir=<?=urlencode($dir_path);?>" class="file-link dir-link<?=$item['is_symlink'] ? ' symlink-dir' : '';?>">
+                        <?=htmlspecialchars($item['name']);?><?=$item['is_symlink'] ? ' (link)' : '';?>
                       </a>
                     <?php endif;?>
                   <?php else: ?>
@@ -1176,8 +1320,8 @@ else if (isset($_GET['error'])) {
                 </td>
                 <td class="nowrap"><?=$item['size'];?></td>
                 <td>
-                  <span class="permission-tag" title="<?=$item['is_readable'] ? 'Readable' : 'Not Readable';?>, <?=$item['is_writable'] ? 'Writable' : 'Not Writable';?>">
-                    <?=getPermissions($item['path']);?>
+                  <span class="permission-tag" title="<?=$item['is_readable'] ? 'Readable' : 'Not Readable';?>, <?=$item['is_writable'] ? 'Writable' : 'Not Writable';?><?=$item['is_symlink'] ? ', Symlink' : '';?><?=$item['is_symlink_with_group_access'] ? ' (Group Access)' : '';?>">
+                    <?=getPermissions($item['path']);?><?=$item['is_symlink'] ? ' 🔗' : '';?>
                   </span>
                 </td>
                 <td class="timestamp"><?=$item['modified'];?></td>
@@ -1196,7 +1340,12 @@ else if (isset($_GET['error'])) {
       <!-- Debug information -->
       <div class="debug-info">
         <h5>Debug Information</h5>
-        <pre><?php print_r($debug);?></pre>
+        <pre><?php 
+          // Add symlink info to debug
+          $debug['using_posix'] = function_exists('posix_getgroups') ? 'Yes' : 'No';
+          $debug['symlinks_checked'] = count(array_filter($items, function($i) { return isset($i['is_symlink']) && $i['is_symlink']; }));
+          print_r($debug);
+        ?></pre>
       </div>
 
       <!-- System info -->
