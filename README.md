@@ -5,12 +5,12 @@ A bash utility for creating and managing PHP development servers with ease.
 ## Features
 
 - Start a PHP development server with a single command
-- Auto-selects random available port from configurable range
-- Auto-detects common web directories (html, public, www, etc.)
+- Auto-selects random available port from configurable range (8100-8999 by default)
+- Auto-detects common web directories (html, public, www, httpdocs, htdocs, webroot, web, wwwroot)
 - Multiple running modes: foreground, background, or screen session
 - Automatic port collision detection and resolution
 - Router file support for custom URL handling
-- Open website in default browser with a single command
+- Auto-detects and launches browser in both GUI and terminal environments
 - Interactive management of running servers via companion script
 - Comprehensive error handling and dependency checking
 - Clean shutdown via signal trapping
@@ -20,7 +20,7 @@ A bash utility for creating and managing PHP development servers with ease.
 
 1. Clone this repository
 2. Make the scripts executable: `chmod +x php-localhost php-localhost-screens`
-3. Optionally, add to your PATH
+3. Optionally, add to your PATH or run the included install.sh script
 
 ## Dependencies
 
@@ -28,6 +28,7 @@ A bash utility for creating and managing PHP development servers with ease.
 - lsof (for process detection)
 - netcat (for port checking)
 - screen (optional, for screen mode)
+- A web browser (optional, for the -x/--execute option)
 
 ## Usage
 
@@ -38,8 +39,8 @@ A bash utility for creating and managing PHP development servers with ease.
 
 Arguments can be in any order.
 
-- `port` - Port number to use (default: auto-assign from port range)
-- `dir` - Directory to serve (auto-detects html/public/www folders)
+- `port` - Port number to use (default: auto-assign from port range 8100-8999)
+- `dir` - Directory to serve (auto-detects common web directories)
 - `mode` - Server run mode (default: fg)
   - `fg` - Run in foreground
   - `bg` - Run in background
@@ -49,8 +50,8 @@ Arguments can be in any order.
 
 - `-p, --port PORT` - Specify port number (0 = auto-assign from port range)
 - `-d, --directory DIR` - Specify directory to serve
-- `-i, --minport MIN` - Set minimum port range for auto-assignment (default: 8100)
-- `-a, --maxport MAX` - Set maximum port range for auto-assignment (default: 8999)
+- `-i, --minport MIN` - Set minimum port for auto-assignment (default: 8100)
+- `-a, --maxport MAX` - Set maximum port for auto-assignment (default: 8999)
 - `--fg` - Run in foreground mode
 - `--bg` - Run in background mode
 - `--screen` - Run in screen session
@@ -63,9 +64,12 @@ Arguments can be in any order.
 ## Management
 
 Use the companion script `php-localhost-screens` to:
-- List all running PHP server instances
-- Interactively manage (view/kill) running servers
-- Manage screen sessions for PHP servers
+- List all running PHP server instances (both standalone and screen sessions)
+- Interactively select servers by PID
+- Kill servers or attach to screen sessions
+- Auto-refresh the server list
+
+Simply run `php-localhost-screens` without arguments for an interactive menu.
 
 ## Router Support
 
@@ -76,6 +80,19 @@ A router file allows you to:
 - Create custom API endpoints
 - Define rewrite rules and redirects
 - Implement custom 404 handlers
+
+## Browser Integration
+
+When using the `-x/--execute` flag, the script will:
+- Attempt to detect the default browser in GUI environments using:
+  - xdg-settings
+  - xdg-mime
+  - update-alternatives
+  - $BROWSER environment variable
+  - Common browser executables
+- In terminal-only environments, it will try to find terminal browsers:
+  - w3m, lynx, elinks, links
+- Launch the detected browser with the localhost URL
 
 ## Examples
 
@@ -104,6 +121,10 @@ php-localhost --bg -x
 # List and manage running PHP servers
 php-localhost-screens
 ```
+
+## Current Version
+
+Version 1.0.430
 
 ## Contributing
 

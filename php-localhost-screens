@@ -9,8 +9,16 @@ COLUMNS=$(tput cols)
 
 (($#)) && {
   [[ "$*" == *"-h"* || "$*" == *"--help"* ]] && {
-    echo "usage: $(basename "$0")"
-    echo "Displays all current php localhosts"
+    echo "Usage: $(basename "$0") [--help|-h]"
+    echo "Description:"
+    echo "  Interactive manager for PHP localhost servers"
+    echo "  - Lists all running PHP server instances (both standalone and screen sessions)"
+    echo "  - Allows selecting servers by PID"
+    echo "  - Provides options to kill servers or attach to screen sessions"
+    echo "  - Auto-refreshes the server list"
+    echo ""
+    echo "Options:"
+    echo "  -h, --help    Display this help message"
     exit 0
   }
 }
