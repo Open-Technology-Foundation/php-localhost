@@ -1,14 +1,39 @@
 #!/bin/bash
+#
+# PHP-Localhost: A bash utility for creating and managing PHP development servers
+# Version: 1.0.431
+#
+# This script launches PHP's built-in web server with intelligent defaults and
+# comprehensive configuration options, making local PHP development easier.
+#
+# Features:
+# - Auto-selects port from configurable range
+# - Auto-detects common web directories
+# - Multiple running modes (foreground, background, screen)
+# - Browser auto-detection and launch
+# - Comprehensive error handling
+#
+# Usage: php-localhost [-q] [-v] [-V] [-h] [-p PORT] [-d DIR] [-i MIN] [-a MAX]
+#                       [-x] [--fg|--bg|--screen] [port] [dir] [mode]
+#
+# See usage() function or run with -h for complete documentation
+#
+
 set -eEuo pipefail
 shopt -s extglob
+
+# Script identification constants
 readonly -- PRG0=$(readlink -en -- "$0")
 readonly -- PRGDIR=$(dirname -- "$PRG0")
 readonly -- PRG=$(basename -- "$PRG0")
-readonly -- BUILD=431
+readonly -- BUILD=432
 readonly -- VERSION=1.0."$BUILD"
+
+# Default configuration variables
 declare -i PORT=0          # Default port to use for PHP server; PORT=0 means get random port (within range MINPORT-MAXPORT)
 declare -i MINPORT=8100 MAXPORT=8999 # Validation range of allowed ports (for randomised)
-declare -- DIRECTORY=''    # Default directory to serve (will fallback to .)
+declare -- DOCROOT=''      # Default docroot directory to serve (will fallback to .)
+declare -a DEFINES=()      # Variable definitions to pass to php
 declare -- MODE=fg         # Default mode: fg (foreground), bg (background), screen
 declare -i VERBOSE=1       # Verbose output by default
 declare -a SERVER_PIDS=()  # Array to track PHP server processes for cleanup
@@ -16,15 +41,44 @@ declare -- WAIT=0.5
 declare -i EXECUTE=0
 
 
+# ====================
 # Utility functions
-text() { ((VERBOSE)) && echo "$PRG": "$*" || true; }  # Verbose echo (respects quiet mode)
-error() { >&2 echo "$PRG": error: "$*"; }  # Error message to stderr
-die() { error "${2:-}"; exit "${1:-1}"; }  # Print error and exit with code
+# ====================
 
-# Error trap and cleanup function
+# Output informational message if verbose mode is enabled
+# Arguments:
+#   $* - Message to display
+# Returns:
+#   None
+text() { ((VERBOSE)) && echo "$PRG": "$*" || true; }
+
+# Output error message to stderr
+# Arguments:
+#   $* - Error message to display
+# Returns:
+#   None
+error() { >&2 echo "$PRG": error: "$*"; }
+
+# Output error message and exit with specified code
+# Arguments:
+#   $1 - Exit code (defaults to 1 if not specified)
+#   $2 - Error message (optional)
+# Returns:
+#   None, script terminates
+die() { error "${2:-}"; exit "${1:-1}"; }
+
+# Error trap and cleanup function for graceful termination
+# This function handles process cleanup on exit, ensuring PHP server processes
+# are properly terminated in foreground mode or error conditions
+#
+# Arguments:
+#   None (uses global variables)
+# Returns:
+#   None, but may terminate script
 cleanup() {
   local -i exit_code=$?
   local -- pid
+
   # Only clean up if we're in foreground mode or trap was triggered due to error
   if [[ $MODE == fg ]] || ((exit_code)); then
     for pid in "${SERVER_PIDS[@]}"; do
@@ -34,6 +88,7 @@ cleanup() {
       fi
     done
   elif ((EXECUTE)); then
+    # Launch browser in execution mode when terminating normally
     execstr=$(get_browser) || die 1 "No Browser found"
     exec "$execstr" http://localhost:"$PORT"/
   fi
@@ -42,33 +97,69 @@ cleanup() {
 # Set up traps for clean exit
 trap cleanup EXIT INT TERM
 
-# Check for required dependencies
+# Check for all required dependencies and validate PHP version
+#
+# This function verifies that all necessary utilities are installed
+# and that PHP is available with a valid version. It checks for:
+# - PHP (always required)
+# - lsof (for process detection)
+# - nc/netcat (for port checking)
+# - screen (only when screen mode is selected)
+#
+# Arguments:
+#   None (uses global MODE variable)
+# Returns:
+#   0 if all dependencies are met, exits with error code 1 otherwise
+# Side effects:
+#   Sets php_version as a local variable
 check_dependencies() {
   local -a missing=()
+
   # Check for PHP
   command -v php >/dev/null 2>&1 || missing+=("php")
+
   # Check for lsof (for process detection)
   command -v lsof >/dev/null 2>&1 || missing+=("lsof")
+
   # Check for nc (for port checking)
   command -v nc >/dev/null 2>&1 || missing+=("netcat")
+
   # If we're using screen mode, check for screen
   [[ "$MODE" == screen ]] && { command -v screen >/dev/null 2>&1 || missing+=("screen"); }
+
   # If we have missing dependencies, report and exit
   if ((${#missing[@]})); then
     error "Missing required dependencies: ${missing[*]}"
     error "Please install the missing packages and try again."
     exit 1
   fi
+
   # Validate PHP version
-  local php_version
+  local -- php_version
   php_version=$(php -r 'echo PHP_VERSION;')
   [[ -z "$php_version" ]] && die 1 "Could not determine PHP version"
   text "Using PHP version $php_version"
+
   return 0
 }
 
+# Detect and return the best available web browser on the system
+#
+# This function attempts to find an appropriate web browser using various methods:
+# 1. In GUI environments, it checks desktop environment settings, alternatives, env vars
+# 2. In terminal environments, it looks for text-based browsers
+#
+# The detection algorithm tries multiple methods in order of preference, falling back
+# to more general approaches if specific detection fails.
+#
+# Arguments:
+#   None
+# Returns:
+#   0 if a browser was found, outputs browser command to stdout
+#   1 if no browser could be found, outputs empty string
 get_browser() {
-  local browser=""
+  local -- browser=''
+
   # Check if we're in a GUI environment
   if [[ -n "$DISPLAY" ]] || [[ -n "$WAYLAND_DISPLAY" ]]; then
     while ((1)); do
@@ -160,7 +251,7 @@ usage() {
 $PRG $VERSION - PHP development server launcher
 
 Usage: $PRG [-q|--quiet] [-v|--verbose] [-V|--version] [-h|--help] 
-       [-p|--port PORT] [-d|--directory DIR] [-i|--minport MIN] [-a|--maxport MAX]
+       [-p|--port PORT] [-d|--docroot DIR] [-i|--minport MIN] [-a|--maxport MAX]
        [--fg|--bg|--screen] [-x|--execute] [port] [dir] [mode]
 
 Arguments can be in any order.
@@ -175,7 +266,7 @@ Parameters:
 
 Options:
     -p, --port PORT       Specify port number (0 = auto-assign from port range)
-    -d, --directory DIR   Specify directory to serve
+    -d, --docroot DIR     Specify docroot directory to serve
     -i, --minport MIN     Set minimum port for auto-assignment (default: $MINPORT)
     -a, --maxport MAX     Set maximum port for auto-assignment (default: $MAXPORT)
     --fg                  Run in foreground mode
@@ -196,7 +287,7 @@ Features:
   - Auto-detects common web directories (html, public, www, httpdocs, htdocs, webroot, web, wwwroot)
   - Auto-detects and manages PHP servers on same port
   - Supports running in foreground, background, or screen session
-  - Auto-uses router.php if present in the served directory
+  - Auto-uses router.php if present in the served docroot directory
   - Opens browser upon server start with -x flag (where available)
   - Auto-detects available browser in both GUI and terminal environments
   - Validates port numbers and checks for availability
@@ -204,16 +295,16 @@ Features:
   - Provides clean shutdown with signal trapping
 
 Examples:
-    # Auto-detect port and directory, run in foreground
+    # Auto-detect port and docroot directory, run in foreground
     $PRG
 
-    # Run on port 8001 serving html/ in background
+    # Run on port 8001 serving docroot html/ in background
     $PRG 8001 html bg
 
     # Set custom port range (1024-2048) and auto-select
     $PRG -i 1024 -a 2048
 
-    # Serve current directory on port 8086
+    # Serve current directory as docroot on port 8086
     $PRG . 8086
 
     # Screen session on port 8087 serving public/
@@ -229,40 +320,87 @@ EOT
   exit "${1:-1}"
 }
 
-# Validate port number
+# Validate a port number for range and format
+#
+# Validates that the provided port is a positive integer and issues warnings
+# if it is outside the recommended range or below 1024 (privileged ports).
+#
+# Arguments:
+#   $1 - Port number to validate
+# Returns:
+#   0 if port is valid (even with warnings)
+#   Exits with code 22 if port is not a valid number
 validate_port() {
   local -i p="$1"
+
   # Check if port is a valid number
   [[ "$p" =~ ^[0-9]+$ ]] || die 22 "Invalid port number: $1 (must be a number)"
+
   # Check port range
   if ((p < MINPORT || p > MAXPORT)); then
     >&2 text "warning: Port $p is outside the recommended range ($MINPORT-$MAXPORT)"
     ((p < 1024)) && >&2 text "warning: Ports below 1024 typically require root privileges"
   fi
+
   return 0
 }
 
+# Get or set the port range for auto-assignment
+#
+# This function has dual behavior:
+# 1. When called with arguments, it sets the global MINPORT and MAXPORT variables
+# 2. When called with no arguments, it returns the current range as a string
+#
+# The function also normalizes port ranges (swaps min/max if needed) and
+# enforces system-wide port limitations (1024-65535).
+#
+# Arguments:
+#   $1 - (Optional) Minimum port number
+#   $2 - (Optional) Maximum port number
+# Returns:
+#   When called with arguments: nothing (sets global MINPORT and MAXPORT)
+#   When called without arguments: outputs port range as string (e.g., "8100-8999")
+# Side Effects:
+#   May modify global MINPORT and MAXPORT variables
 port_range() {
   if (($#)); then
     local -i min=$1 max=$2
     [[ "$min" =~ ^[0-9]+$ ]] || die 22 "Invalid port number: $min (must be a number)"
     [[ "$max" =~ ^[0-9]+$ ]] || die 22 "Invalid port number: $max (must be a number)"
+
+    # Swap if min > max
     ((min > max)) && { min=$2; max=$1; }
+
+    # Enforce system-wide port limitations
     ((max > 65535)) && max=65535
     ((min < 1024)) && min=1024
+
+    # Set global variables
     MINPORT=$min
     MAXPORT=$max
   else
+    # Output current range
     echo -n "$MINPORT-$MAXPORT"
   fi
 }
 
+# Find a random available port within the configured range
+#
+# This function picks random ports from the configured range (MINPORT-MAXPORT)
+# and checks if they are in use. It continues until it finds an available port.
+#
+# Arguments:
+#   None (uses global MINPORT and MAXPORT via port_range function)
+# Returns:
+#   0 if successful, outputs available port number to stdout
+#   Note: This function will continue indefinitely until it finds an open port
 find_available_port() {
-  local port
+  local -- port
   while ((1)); do
     # Generate a random port within the specified range
     port=$(shuf -i "$(port_range)" -n 1)
-    # Check if the port is available
+
+    # Check if the port is available using ss command
     if ! ss -tuln | grep -q ":$port "; then
       echo "$port"
       return 0
@@ -283,10 +421,12 @@ while (($#)); do case $1 in
   +([0-9]))       validate_port "$1"; PORT=$1 ;;
   --bg|--fg|--screen)
                   MODE=${1:2} ;;
-  -d|--directory) [[ -n $DIRECTORY ]] && die 1 "Directory '$DIRECTORY' was previously defined."
-                  shift; DIRECTORY=${1:-} ;;
+  -t|--docroot)   [[ -n $DOCROOT ]] && die 1 "Directory '$DOCROOT' was previously defined."
+                  shift; DOCROOT=${1:-} ;;
   -i|--minport)   shift; MINPORT=${1:- 1024} ;;
   -a|--maxport)   shift; MAXPORT=${1:- 65535} ;;
+
+  -d|--define)    shift; DEFINES+=(${1:-}) ;;
 
   -x|--execute)   EXECUTE=1 ;;
   -v|--verbose)   VERBOSE=1 ;;
@@ -297,8 +437,8 @@ while (($#)); do case $1 in
                   set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}" ;;
   -*)             die 22 "Bad argument '$1'" ;;
   bg|fg|screen)   MODE=$1 ;;
-  *)              [[ -n $DIRECTORY ]] && die 1 "Directory '$DIRECTORY' was previously defined."
-                  DIRECTORY="${1:-}"
+  *)              [[ -n $DOCROOT ]] && die 1 "Directory '$DOCROOT' was previously defined."
+                  DOCROOT="${1:-}"
                   ;;
 esac; shift; done
 
@@ -308,16 +448,16 @@ port_range "$MINPORT" "$MAXPORT"
 # PORT flag == 0 means get rando
 ((PORT)) || PORT=$(find_available_port)
 
-if [[ -z $DIRECTORY ]]; then
+if [[ -z $DOCROOT ]]; then
   for htmldir in public_html html www httpdocs htdocs webroot public web wwwroot; do
-    [[ -d "$htmldir" ]] && { DIRECTORY="$htmldir"; break; }
+    [[ -d "$htmldir" ]] && { DOCROOT="$htmldir"; break; }
   done
-  [[ -z $DIRECTORY ]] && DIRECTORY='.'
+  [[ -z $DOCROOT ]] && DOCROOT='.'
 fi
 
-# Verify directory exists
-[[ -d "$DIRECTORY" ]] || die 2 "Directory '$DIRECTORY' does not exist"
-DIRECTORY=$(readlink -en -- "$DIRECTORY") || die 2 "Failed to resolve directory path"
+# Verify docroot directory exists
+[[ -d "$DOCROOT" ]] || die 2 "Directory '$DOCROOT' does not exist"
+DOCROOT=$(readlink -en -- "$DOCROOT") || die 2 "Failed to resolve directory path"
 
 # Check dependencies after processing arguments (needed for mode variable)
 check_dependencies
@@ -349,56 +489,92 @@ if nc -z localhost "$PORT" 2>/dev/null; then
   fi
 fi
 
-# Function to start PHP server
+# Start the PHP development server with appropriate configuration
+#
+# This function configures and launches the PHP built-in web server based on
+# the current settings (port, document root, mode). It handles server startup
+# differently depending on the selected mode (foreground, background, screen).
+#
+# For background and screen modes, it performs verification to ensure the server
+# started successfully before exiting.
+#
+# Arguments:
+#   None (uses global variables for configuration)
+# Returns:
+#   Does not return in foreground mode (runs PHP server)
+#   Exits with code 0 in background and screen modes if successful
+#   Exits with code 1 if server fails to start
+# Side Effects:
+#   - Adds server PID to SERVER_PIDS array in background mode
+#   - Creates screen session in screen mode
+#   - Outputs status information
 start_php_server() {
-  text "localhost:$PORT for $DIRECTORY"
+  text "localhost:$PORT for $DOCROOT"
 
-  # Create router file if it doesn't exist
-  local router_file="${DIRECTORY}/router.php"
+  # Check for router file
+  local -- router_file="${DOCROOT}/router.php"
   [[ -f "$router_file" ]] || text "No router file found. Using default PHP server routing."
-  
-  # Command to run
-  local php_cmd=("php" "-S" "localhost:${PORT}" "-t" "${DIRECTORY}/")
-  
+
+  # Build PHP command array
+  local -a php_cmd=()
+  php_cmd=(php -S localhost:"${PORT}" -t "${DOCROOT}/")
+
+  # Add any PHP defines
+  local -- def
+  for def in "${DEFINES[@]}"; do
+    php_cmd+=(-d "$def")
+  done
+
   # Add router file if it exists
   [[ -f "$router_file" ]] && php_cmd+=("$router_file")
-  
+
+  # Handle different server modes
   case "$MODE" in
     bg)
-      # Run in background
+      # Run in background mode
       text "Starting PHP server in background"
       "${php_cmd[@]}" > /dev/null 2>&1 &
-      local server_pid=$!
+      local -- server_pid=$!
       SERVER_PIDS+=("$server_pid")
+
       # Verify server started correctly
       sleep "$WAIT"
       kill -0 "$server_pid" 2>/dev/null || die 1 "PHP server failed to start. Check for errors."
+
+      # Show success information
       text "Server started with PID $server_pid"
       text "To stop it, run: kill $server_pid"
       text "$PRG will now exit, but the PHP server will continue running in the background."
       text http://localhost:"$PORT"/
       exit 0
       ;;
+
     screen)
       # Create a detached screen session
       text "Starting PHP server in screen session named 'localhost-$PORT'"
       text "Use 'screen -r localhost-$PORT' to reattach to the server"
       text "Use Ctrl+A followed by D to detach from screen"
-      # Create screen session
-      screen -dmS localhost-"$PORT" "${php_cmd[@]}"
+
+      # Create screen session with history buffer
+      screen -h 10000 -dmS localhost-"$PORT" "${php_cmd[@]}"
+
       # Verify screen session exists
       sleep "$WAIT"
       screen -list | grep -q localhost-"$PORT" || die 1 "Failed to create screen session. Check for errors."
+
+      # Show success information
       text "$PRG will now exit, but the PHP server will continue running in screen."
       text http://localhost:"$PORT"/
       exit 0
       ;;
+
     *)
-      EXECUTE=0 # not valid in this mode
       # Default: run in foreground (script will not exit until server is stopped)
+      EXECUTE=0 # Browser auto-execution not valid in foreground mode
       text "Starting PHP server in foreground. Press Ctrl+C to stop."
       text http://localhost:"$PORT"/
-      # Execute PHP server in foreground
+
+      # Execute PHP server in foreground (this blocks until server terminates)
       "${php_cmd[@]}"
       ;;
   esac

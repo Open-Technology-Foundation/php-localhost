@@ -1,12 +1,28 @@
 #!/bin/bash
+#
+# PHP-Localhost-Screens: Interactive PHP server instance manager
+#
+# This companion script to php-localhost provides an interactive interface
+# for managing running PHP server instances, including both standalone processes
+# and screen sessions. It allows users to list, attach to, and terminate servers.
+#
+# Features:
+# - Lists all running PHP server instances
+# - Interactive server selection by PID
+# - Terminate servers or attach to screen sessions
+# - Auto-refreshes server list
+#
+# Usage: php-localhost-screens [--help|-h]
+#
+
 set -eEuo pipefail +o histexpand
 shopt -s extglob globstar checkwinsize #-u dotglob nullglob
+
+# Get terminal width for display formatting
 declare -- COLUMNS
 COLUMNS=$(tput cols)
 
-#echo -n ' ' # update COLUMNS
-#echo $COLUMNS
-
+# Handle command-line arguments
 (($#)) && {
   [[ "$*" == *"-h"* || "$*" == *"--help"* ]] && {
     echo "Usage: $(basename "$0") [--help|-h]"
@@ -23,40 +39,75 @@ COLUMNS=$(tput cols)
   }
 }
 
+# Print a horizontal line across the terminal width
+# Used for visual separation in the UI
+#
+# Arguments:
+#   None (uses global COLUMNS variable)
+# Returns:
+#   None (prints line to stdout)
 printline() { eval printf '%.0s-' {1..${COLUMNS:-64}}; echo; }
 
+# Main interactive loop for PHP server management
 echo "Active PHP Localhosts"
 while((1)); do
+  # Find all running PHP server instances
+  # Searches for php server processes with 'localhost:PORT' pattern
   readarray -t TT < <(ps -aeF |grep 'php .*localhost:[0-9]* ' |tr -s ' ' |cut -d' ' -f2,11- |sort -n)
+
+  # Exit if no servers found
   ((${#TT[@]})) || { >&2 echo "$(basename "$0"): No PHP localhosts found"; exit 1; }
+
+  # Show server selection menu
   PS3=$'\n''Select PHP localhost PID: '
   printline
   echo '0) quit'
   select screen_id in "${TT[@]}"; do
+    # Handle quit option (0, q, or 'quit')
     [[ 0q == *"${REPLY:0:1}"* || $screen_id == quit ]] && break 2
+    # Handle invalid selection
     [[ -z $screen_id ]] && continue 2
 
+    # Show operations menu for selected server
     while ((1)); do
       printline
       echo -e "Target: $screen_id\n"
+
+      # Extract PID from the selection
       pid=${screen_id%% *}
-      OPS=(remove)
-      [[ $screen_id == *"SCREEN"* ]] && OPS+=(open)
+
+      # Determine available operations based on server type
+      OPS=(remove)  # All servers can be removed
+      [[ $screen_id == *"SCREEN"* ]] && OPS+=(open)  # Only screen sessions can be opened
+
+      # Show operations menu
       PS3=$'\n''Operation: '
       echo '0) back'
       select op in "${OPS[@]}"; do
+        # Handle back option (0, q, b, or 'back')
         [[ 0qb == *"${REPLY:0:1}"* || $op == back ]] && break 3
+        # Handle invalid selection
         [[ -z $op ]] && continue 2
+
+        # Process selected operation
         case "$op" in
-          remove)   if [[ $screen_id == *"SCREEN"* ]]; then
+          remove)   # Remove/terminate the server
+                    if [[ $screen_id == *"SCREEN"* ]]; then
+                      # For screen sessions, use screen command to quit
                       screen -X -S "$pid" quit
                     else
+                      # For standalone processes, use kill
                       kill -9 "$pid"
                     fi
                     break 3 ;;
-          open)     screen -r "$pid"
+
+          open)     # Attach to screen session
+                    # Uses history buffer of 10000 lines
+                    screen -h 10000 -r "$pid"
                     continue 2 ;;
-          *)        continue 2;;
+
+          *)        # Unrecognized operation
+                    continue 2;;
         esac
       done
     done

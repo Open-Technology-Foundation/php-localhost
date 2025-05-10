@@ -1,4 +1,24 @@
 <?php
+/**
+ * PHP-Localhost File Browser Interface
+ *
+ * This file provides a feature-rich web interface for browsing and managing files
+ * when using the PHP-Localhost server. It offers directory navigation, file viewing
+ * with syntax highlighting, file operations, and system information display.
+ *
+ * Features:
+ * - Directory listing with sorting and filtering options
+ * - File viewing with syntax highlighting for various languages
+ * - File download functionality
+ * - File and directory management (deletion, etc.)
+ * - Dark/light theme switching with cookie persistence
+ * - System information display
+ * - Security protections against directory traversal
+ *
+ * @version 1.0.431
+ * @license Internal use only
+ */
+
 // Start session for state persistence (sorting, filtering)
 session_start();
 

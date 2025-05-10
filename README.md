@@ -32,8 +32,9 @@ A bash utility for creating and managing PHP development servers with ease.
 
 ## Usage
 
-    php-localhost [-q] [-v] [-V] [-h] [-p PORT] [-d DIR] [-i MIN] [-a MAX] [-x] [--fg|--bg|--screen] [port] [dir] [mode]
-
+```
+php-localhost [-q] [-v] [-V] [-h] [-p PORT] [-d DIR] [-i MIN] [-a MAX] [-x] [--fg|--bg|--screen] [port] [dir] [mode]
+```
 
 ### Parameters
 
@@ -94,6 +95,18 @@ When using the `-x/--execute` flag, the script will:
   - w3m, lynx, elinks, links
 - Launch the detected browser with the localhost URL
 
+## Web Interface
+
+The project also includes a PHP file browser interface that:
+- Provides directory navigation with breadcrumb trails
+- Offers file viewing with syntax highlighting for common file types
+- Supports file downloads
+- Includes file/directory management features
+- Displays system information
+- Supports dark/light theme switching
+
+Access this interface by navigating to the server URL in any browser.
+
 ## Examples
 
 ```bash
@@ -124,7 +137,7 @@ php-localhost-screens
 
 ## Current Version
 
-Version 1.0.430
+Version 1.0.431
 
 ## Contributing
 
@@ -133,4 +146,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
-
