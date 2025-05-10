@@ -26,7 +26,7 @@ shopt -s extglob
 readonly -- PRG0=$(readlink -en -- "$0")
 readonly -- PRGDIR=$(dirname -- "$PRG0")
 readonly -- PRG=$(basename -- "$PRG0")
-readonly -- BUILD=432
+readonly -- BUILD=433
 readonly -- VERSION=1.0."$BUILD"
 
 # Default configuration variables
