@@ -26,7 +26,7 @@ shopt -s extglob
 readonly -- PRG0=$(readlink -en -- "$0")
 readonly -- PRGDIR=$(dirname -- "$PRG0")
 readonly -- PRG=$(basename -- "$PRG0")
-readonly -- BUILD=433
+readonly -- BUILD=434
 readonly -- VERSION=1.0."$BUILD"
 
 # Default configuration variables
@@ -418,7 +418,7 @@ while (($#)); do case $1 in
                   validate_port "${1:-"$PORT"}"
                   PORT=${1:-"$PORT"}
                   ;;
-  +([0-9]))       validate_port "$1"; PORT=$1 ;;
+  +[0-9])      validate_port "$1"; PORT=$1 ;;
   --bg|--fg|--screen)
                   MODE=${1:2} ;;
   -t|--docroot)   [[ -n $DOCROOT ]] && die 1 "Directory '$DOCROOT' was previously defined."
