@@ -26,7 +26,7 @@ shopt -s extglob
 readonly -- PRG0=$(readlink -en -- "$0")
 readonly -- PRGDIR=$(dirname -- "$PRG0")
 readonly -- PRG=$(basename -- "$PRG0")
-readonly -- BUILD=434
+readonly -- BUILD=435
 readonly -- VERSION=1.0."$BUILD"
 
 # Default configuration variables
@@ -162,7 +162,7 @@ get_browser() {
 
   # Check if we're in a GUI environment
   if [[ -n "$DISPLAY" ]] || [[ -n "$WAYLAND_DISPLAY" ]]; then
-    while ((1)); do
+    while :; do
       # Try xdg-settings first (most reliable in modern systems)
       if command -v xdg-settings &>/dev/null; then
         browser_desktop=$(xdg-settings get default-web-browser 2>/dev/null)
@@ -396,7 +396,7 @@ port_range() {
 #   Note: This function will continue indefinitely until it finds an open port
 find_available_port() {
   local -- port
-  while ((1)); do
+  while :; do
     # Generate a random port within the specified range
     port=$(shuf -i "$(port_range)" -n 1)
 

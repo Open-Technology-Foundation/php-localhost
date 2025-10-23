@@ -1,0 +1,64 @@
+#!/bin/bash
+# Bash completion for php-localhost and php-localhost-screens
+
+_php_localhost() {
+  local cur prev opts
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  # Long and short options
+  opts="--port --docroot --minport --maxport --fg --bg --screen --execute --quiet --verbose --version --help
+        -p -d -i -a -x -q -v -V -h"
+
+  # Positional arguments: port numbers, directories, and modes
+  local modes="fg bg screen"
+  local directories
+
+  case $prev in
+    -p|--port|-i|--minport|-a|--maxport)
+      # Complete with port numbers (common range)
+      COMPREPLY=( $(compgen -W "8080 8100 8000 3000 8001 8002 8003 8004 8005" -- "$cur") )
+      return 0
+      ;;
+    -d|--docroot)
+      # Complete with directories
+      COMPREPLY=( $(compgen -d -- "$cur") )
+      return 0
+      ;;
+    *)
+      # Check if current word looks like a port number
+      if [[ $cur =~ ^[0-9]+$ ]]; then
+        COMPREPLY=( $(compgen -W "8080 8100 8000 3000 8001 8002 8003 8004 8005" -- "$cur") )
+        return 0
+      fi
+      
+      # Check if current word starts with a dash (option)
+      if [[ $cur == -* ]]; then
+        COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+        return 0
+      fi
+      
+      # Complete with modes and common directories
+      directories=$(find . -maxdepth 1 -type d -name "public*" -o -name "html*" -o -name "www*" -o -name "web*" -o -name "htdocs*" -o -name "httpdocs*" -o -name "webroot*" -o -name "wwwroot*" 2>/dev/null | head -10)
+      COMPREPLY=( $(compgen -W "$modes $directories" -- "$cur") )
+      return 0
+      ;;
+  esac
+}
+
+_php_localhost_screens() {
+  local cur opts
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+
+  # Only has help options
+  opts="--help -h"
+
+  COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+  return 0
+}
+
+# Register completion functions
+complete -F _php_localhost php-localhost
+complete -F _php_localhost_screens php-localhost-screens

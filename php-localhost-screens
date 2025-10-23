@@ -50,7 +50,7 @@ printline() { eval printf '%.0s-' {1..${COLUMNS:-64}}; echo; }
 
 # Main interactive loop for PHP server management
 echo "Active PHP Localhosts"
-while((1)); do
+while :; do
   # Find all running PHP server instances
   # Searches for php server processes with 'localhost:PORT' pattern
   readarray -t TT < <(ps -aeF |grep 'php .*localhost:[0-9]* ' |tr -s ' ' |cut -d' ' -f2,11- |sort -n)
@@ -69,7 +69,7 @@ while((1)); do
     [[ -z $screen_id ]] && continue 2
 
     # Show operations menu for selected server
-    while ((1)); do
+    while :; do
       printline
       echo -e "Target: $screen_id\n"
 
